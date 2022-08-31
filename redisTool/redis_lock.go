@@ -2,6 +2,7 @@ package redisTool
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,13 +73,19 @@ type RedisLockParam struct {
 	Expire  int
 }
 
+func Uuid() string {
+	u := uuid.NewV4()
+	uuidStr := strings.Replace(u.String(), "-", "", -1)
+	return uuidStr
+}
+
 func LockRedis(r *Redisgogogo.Redis, key string) (bool, *RedisLockParam) {
 	param := &RedisLockParam{
 		Mu:    sync.Mutex{},
 		Redis: r,
 		Key:   key,
 	}
-	param.UuidStr = uuid.NewV1().String()
+	param.UuidStr = Uuid()
 	isOk := false
 	result, err := redis.Int(param.Redis.Eval(SCRIPT_LOCK, []string{param.Key}, []interface{}{param.UuidStr, REDIS_LOCK_EXPIRE}))
 	if err != nil {
