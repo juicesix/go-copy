@@ -9,6 +9,7 @@ import (
 	"github.com/garyburd/redigo/redis"
 	"github.com/juicesix/logging"
 	"github.com/juicesix/redisgogogo"
+	"github.com/spf13/cast"
 )
 
 func RedisConn(service Redisgogogo.RedisConfig) *Redisgogogo.Redis {
@@ -54,6 +55,60 @@ func ZRevRangeWithScore(r *Redisgogogo.Redis, key string, start, end int) ([]Mem
 		}
 	}
 	return mems, nil
+}
+
+// ZAllrevrangebyscore result: map(key->member,value->score)
+func ZAllrevrangebyscore(r *Redisgogogo.Redis, key string, start, end int) (map[string]string, error) {
+	result := make(map[string]string, 0)
+	different := end - start
+	for {
+		data, err := r.Zrevrangebyscore(key, "+inf", "-inf", "WITHSCORES", "limit", start, end)
+		if data == nil || len(data) <= 0 {
+			break
+		}
+		if err != nil {
+			logging.Errorf("ZAllrevrangebyscore error, key:[%v],err:%v", key, err)
+			break
+		}
+		for i := 0; i < len(data); i += 2 {
+			result[data[i]] = data[i+1]
+		}
+		start += different
+	}
+
+	return result, nil
+}
+
+type ActivityRank struct {
+	Uid   int64 `json:"uid"`
+	Score int64 `json:"score"`
+}
+
+// GetActivityRank 获取榜单前x名和当前用户排名,start值传0，end值传x
+func GetActivityRank(r *Redisgogogo.Redis, key string, uid int64, start, end int) ([]int64, []ActivityRank, int64, int64, error) {
+	uids := []int64{}
+	ret := []ActivityRank{}
+	rank := int64(0)
+	res, err := r.Zrevrangebyscore(key, "+inf", "-inf", "WITHSCORES", "limit", start, end)
+	if err != nil {
+		logging.Errorf("GetActivityRank Zrevrangebyscore error, key:[%v],err:%v", key, err)
+		return uids, ret, 0, 0, err
+	}
+	for i := 0; i < len(res); i += 2 {
+		if i+1 < len(res) {
+			info := ActivityRank{}
+			info.Uid, _ = strconv.ParseInt(res[i], 10, 64)
+			info.Score, _ = strconv.ParseInt(res[i+1], 10, 64)
+			ret = append(ret, info)
+			uids = append(uids, info.Uid)
+		}
+	}
+	exists, _ := r.ZScoreIfExists(key, cast.ToString(uid))
+	if exists > 0 {
+		index, _ := r.Do("ZREVRANK", key, uid)
+		rank = cast.ToInt64(index) + 1
+	}
+	return uids, ret, int64(exists), rank, nil
 }
 
 // 简化pipeline流程
